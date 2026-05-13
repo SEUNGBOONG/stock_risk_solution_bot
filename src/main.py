@@ -11,7 +11,7 @@ from .analytics import (
 )
 from .config import load_settings
 from .kis_client import KisClient
-from .reporting import format_slack_text, insert_notion_rows, post_to_slack
+from .reporting import insert_notion_rows, post_slack_separate_reports
 
 
 def _load_universe(path: str) -> list[str]:
@@ -32,8 +32,13 @@ def run() -> None:
 
     kospi_universe = _load_universe("data/universes/kospi200_sample.txt")
     nasdaq_universe = _load_universe("data/universes/nasdaq100_sample.txt")
-    domestic_picks = undervalued_scan(kospi_universe, top_n=5)
-    nasdaq_picks = undervalued_scan(nasdaq_universe, top_n=5)
+    mode = settings.run_mode
+    domestic_picks: list = []
+    nasdaq_picks: list = []
+    if mode in ("full", "domestic"):
+        domestic_picks = undervalued_scan(kospi_universe, top_n=5)
+    if mode in ("full", "overseas"):
+        nasdaq_picks = undervalued_scan(nasdaq_universe, top_n=5)
 
     fx = fx_fairness_analysis()
     account_results = {}
@@ -45,19 +50,22 @@ def run() -> None:
         alias_corr_advice = build_diversification_advice(alias_corr)
         account_results[alias] = {"risk": alias_risk, "corr_advice": alias_corr_advice}
 
-    slack_text = format_slack_text(
-        risk=risk,
-        domestic_picks=domestic_picks,
-        nasdaq_picks=nasdaq_picks,
-        corr=corr,
-        corr_advice=corr_advice,
-        fx=fx,
-        account_results=account_results,
+    post_slack_separate_reports(
+        settings.slack_bot_token,
+        settings.slack_channel_id,
+        mode,
+        risk,
+        domestic_picks,
+        nasdaq_picks,
+        corr,
+        corr_advice,
+        fx,
+        account_results,
     )
-    post_to_slack(settings.slack_bot_token, settings.slack_channel_id, slack_text)
     insert_notion_rows(
         settings.notion_token,
         settings.notion_database_id,
+        mode,
         risk,
         domestic_picks,
         nasdaq_picks,

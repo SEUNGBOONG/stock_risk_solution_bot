@@ -28,6 +28,8 @@ class Settings:
     kis_base_url: str
     kis_accounts: List[AccountConfig]
     use_mock_balance: bool
+    # full | domestic | overseas — which quant scan to run (GitHub sets per schedule)
+    run_mode: str
 
 
 def _parse_accounts(raw: str) -> List[AccountConfig]:
@@ -53,6 +55,9 @@ def _parse_accounts(raw: str) -> List[AccountConfig]:
 
 
 def load_settings() -> Settings:
+    mode = os.getenv("RUN_MODE", "full").strip().lower()
+    if mode not in {"full", "domestic", "overseas"}:
+        mode = "full"
     return Settings(
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_database_id=os.getenv("NOTION_DATABASE_ID", ""),
@@ -65,4 +70,5 @@ def load_settings() -> Settings:
         ),
         kis_accounts=_parse_accounts(os.getenv("KIS_ACCOUNTS", "")),
         use_mock_balance=os.getenv("USE_MOCK_BALANCE", "false").lower() == "true",
+        run_mode=mode,
     )

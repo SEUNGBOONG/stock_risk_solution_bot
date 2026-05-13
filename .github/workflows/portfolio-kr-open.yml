@@ -1,23 +1,16 @@
-# 수동 실행: 통합(국내+해외 스캔) 또는 모드 선택
-name: Portfolio manual
+# 국내 정규장 개장 직후 (KST 월~금 09:00) — GitHub cron 은 UTC 기준
+name: Portfolio KR open
 
 on:
   workflow_dispatch:
-    inputs:
-      run_mode:
-        description: "full=국내+나스닥 스캔, domestic=국내만, overseas=나스닥만"
-        type: choice
-        default: full
-        options:
-          - full
-          - domestic
-          - overseas
+  schedule:
+    - cron: "0 0 * * 1-5"
 
 jobs:
   analyze:
     runs-on: ubuntu-latest
     env:
-      RUN_MODE: ${{ github.event.inputs.run_mode || 'full' }}
+      RUN_MODE: domestic
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run analysis
+      - name: Run analysis (국내 저평가 스캔)
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}

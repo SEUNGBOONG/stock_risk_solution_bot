@@ -41,7 +41,6 @@ def calc_risk_metrics(positions: List[Position]) -> RiskResult:
     symbols = sorted(set([p.symbol for p in positions]))
     prices = _download_prices(symbols, days=550).dropna()
     returns = prices.pct_change().dropna()
-    latest_prices = prices.iloc[-1]
     weights_raw = []
     for symbol in symbols:
         symbol_val = sum(p.market_value_krw for p in positions if p.symbol == symbol)
@@ -100,14 +99,24 @@ def build_diversification_advice(corr: pd.DataFrame) -> str:
     return f"상관계수 높은 조합: {pair_txt}. 동일 섹터 비중 축소를 권장합니다."
 
 
+def _roe_as_ratio(roe: float | None) -> float | None:
+    if roe is None:
+        return None
+    r = float(roe)
+    if abs(r) > 1.5:
+        return r / 100.0
+    return r
+
+
 def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, float | str]]:
     rows: List[Dict[str, float | str]] = []
     for symbol in universe:
         ticker = yf.Ticker(symbol)
         info = ticker.info
-        pe = info.get("trailingPE")
+        pe = info.get("trailingPE") or info.get("forwardPE")
         pb = info.get("priceToBook")
-        roe = info.get("returnOnEquity")
+        roe_raw = info.get("returnOnEquity")
+        roe = _roe_as_ratio(roe_raw)
         dy = info.get("dividendYield")
         if pe is None or pb is None or roe is None:
             continue
@@ -126,6 +135,22 @@ def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, floa
         )
     rows.sort(key=lambda x: x["score"], reverse=True)
     return rows[:top_n]
+
+
+def format_picks_for_slack(picks: List[Dict[str, float | str]], empty_label: str) -> str:
+    if not picks:
+        return empty_label
+    lines: List[str] = []
+    for p in picks:
+        roe = float(p["roe"])
+        roe_pct = roe * 100.0 if abs(roe) <= 1.5 else roe
+        dy = float(p["dividend_yield"])
+        dy_pct = dy * 100.0 if dy <= 1.0 else dy
+        lines.append(
+            f"• `{p['symbol']}` PER {float(p['per']):.1f} | PBR {float(p['pbr']):.2f} | "
+            f"ROE {roe_pct:.1f}% | 배당 {dy_pct:.2f}% | 점수 {float(p['score']):.1f}"
+        )
+    return "\n".join(lines)
 
 
 def fx_fairness_analysis() -> Dict[str, float | str]:
