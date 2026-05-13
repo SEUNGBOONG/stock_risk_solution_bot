@@ -21,15 +21,25 @@ class RiskResult:
 
 
 def _download_prices(symbols: List[str], days: int = 365) -> pd.DataFrame:
+    if not symbols:
+        return pd.DataFrame()
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    df = yf.download(
-        symbols,
-        start=start.date().isoformat(),
-        end=end.date().isoformat(),
-        progress=False,
-        auto_adjust=True,
-    )["Close"]
+    try:
+        raw = yf.download(
+            symbols,
+            start=start.date().isoformat(),
+            end=end.date().isoformat(),
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+    except Exception as exc:
+        print(f"[market-data] price download failed: {exc}")
+        return pd.DataFrame()
+    if raw.empty or "Close" not in raw:
+        return pd.DataFrame()
+    df = raw["Close"]
     if isinstance(df, pd.Series):
         df = df.to_frame()
     return df.dropna(how="all")
@@ -37,10 +47,9 @@ def _download_prices(symbols: List[str], days: int = 365) -> pd.DataFrame:
 
 def calc_risk_metrics(positions: List[Position]) -> RiskResult:
     if not positions:
-        return RiskResult(0.0, 0.0, 0.0, "포지션이 없습니다.")
+        return RiskResult(0.0, 0.0, 0.0, "보유 포지션이 없습니다.")
+
     symbols = sorted(set([p.symbol for p in positions]))
-    prices = _download_prices(symbols, days=550).dropna()
-    returns = prices.pct_change().dropna()
     weights_raw = []
     for symbol in symbols:
         symbol_val = sum(p.market_value_krw for p in positions if p.symbol == symbol)
@@ -48,8 +57,18 @@ def calc_risk_metrics(positions: List[Position]) -> RiskResult:
     weights = np.array(weights_raw, dtype=float)
     total_asset = float(weights.sum())
     if total_asset <= 0:
-        return RiskResult(0.0, 0.0, 0.0, "자산평가액이 0입니다.")
+        return RiskResult(0.0, 0.0, 0.0, "자산 평가금액이 0입니다.")
     weights = weights / total_asset
+
+    prices = _download_prices(symbols, days=550).dropna()
+    returns = prices.pct_change().dropna()
+    if returns.empty or returns.shape[1] != len(symbols):
+        return RiskResult(
+            total_asset_krw=total_asset,
+            var_95_krw=0.0,
+            stress_loss_krw=total_asset * 0.11,
+            action_guide="시세 데이터 부족으로 VaR 산출 생략. 외부 데이터/API 상태 확인 필요",
+        )
 
     mu = returns.mean().to_numpy()
     cov = returns.cov().to_numpy()
@@ -65,11 +84,11 @@ def calc_risk_metrics(positions: List[Position]) -> RiskResult:
 
     ratio = daily_var / total_asset if total_asset else 0.0
     if ratio >= 0.035:
-        guide = "매도 비중 확대 (고위험 구간)"
+        guide = "매도 비중 검토 (고위험 구간)"
     elif ratio >= 0.02:
         guide = "보유 (중립, 리밸런싱 점검)"
     else:
-        guide = "추가매수 가능 (저위험 구간)"
+        guide = "추가 매수 가능 (저위험 구간)"
     return RiskResult(
         total_asset_krw=total_asset,
         var_95_krw=daily_var,
@@ -84,6 +103,8 @@ def calc_correlation_matrix(positions: List[Position]) -> pd.DataFrame:
         return pd.DataFrame()
     prices = _download_prices(symbols, days=365).dropna()
     returns = prices.pct_change().dropna()
+    if returns.empty:
+        return pd.DataFrame()
     return returns.corr().round(3)
 
 
@@ -96,7 +117,7 @@ def build_diversification_advice(corr: pd.DataFrame) -> str:
         return "쏠림 위험이 낮습니다. 현재 분산 상태를 유지하세요."
     top = high_pairs.sort_values(ascending=False).head(3)
     pair_txt = ", ".join([f"{a}-{b}({v:.2f})" for (a, b), v in top.items()])
-    return f"상관계수 높은 조합: {pair_txt}. 동일 섹터 비중 축소를 권장합니다."
+    return f"상관계수가 높은 조합: {pair_txt}. 동일 섹터 비중 축소를 권장합니다."
 
 
 def _roe_as_ratio(roe: float | None) -> float | None:
@@ -111,8 +132,12 @@ def _roe_as_ratio(roe: float | None) -> float | None:
 def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, float | str]]:
     rows: List[Dict[str, float | str]] = []
     for symbol in universe:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+        except Exception as exc:
+            print(f"[market-data] fundamentals failed for {symbol}: {exc}")
+            continue
         pe = info.get("trailingPE") or info.get("forwardPE")
         pb = info.get("priceToBook")
         roe_raw = info.get("returnOnEquity")
@@ -147,14 +172,32 @@ def format_picks_for_slack(picks: List[Dict[str, float | str]], empty_label: str
         dy = float(p["dividend_yield"])
         dy_pct = dy * 100.0 if dy <= 1.0 else dy
         lines.append(
-            f"• `{p['symbol']}` PER {float(p['per']):.1f} | PBR {float(p['pbr']):.2f} | "
+            f"- `{p['symbol']}` PER {float(p['per']):.1f} | PBR {float(p['pbr']):.2f} | "
             f"ROE {roe_pct:.1f}% | 배당 {dy_pct:.2f}% | 점수 {float(p['score']):.1f}"
         )
     return "\n".join(lines)
 
 
 def fx_fairness_analysis() -> Dict[str, float | str]:
-    usdkrw = yf.download("KRW=X", period="1y", interval="1d", progress=False)["Close"].dropna()
+    empty_result = {
+        "current": 0.0,
+        "ma20": 0.0,
+        "ma120": 0.0,
+        "mean_1y": 0.0,
+        "view": "환율 데이터를 가져오지 못했습니다.",
+    }
+    try:
+        raw = yf.download("KRW=X", period="1y", interval="1d", progress=False)
+    except Exception as exc:
+        print(f"[market-data] FX download failed: {exc}")
+        return empty_result
+    if raw.empty or "Close" not in raw:
+        return empty_result
+
+    usdkrw = raw["Close"].dropna()
+    if usdkrw.empty:
+        return empty_result
+
     current = float(usdkrw.iloc[-1])
     ma20 = float(usdkrw.rolling(20).mean().iloc[-1])
     ma120 = float(usdkrw.rolling(120).mean().iloc[-1])

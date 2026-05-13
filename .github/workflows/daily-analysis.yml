@@ -1,11 +1,10 @@
-# 수동 실행: 통합(국내+해외 스캔) 또는 모드 선택
 name: Portfolio manual
 
 on:
   workflow_dispatch:
     inputs:
       run_mode:
-        description: "full=국내+나스닥 스캔, domestic=국내만, overseas=나스닥만"
+        description: "full=domestic+overseas scan, domestic=domestic only, overseas=overseas only"
         type: choice
         default: full
         options:
@@ -24,6 +23,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |

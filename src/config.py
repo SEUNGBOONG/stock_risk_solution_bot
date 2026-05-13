@@ -28,7 +28,7 @@ class Settings:
     kis_base_url: str
     kis_accounts: List[AccountConfig]
     use_mock_balance: bool
-    # full | domestic | overseas — which quant scan to run (GitHub sets per schedule)
+    # full | domestic | overseas. GitHub Actions sets this per workflow.
     run_mode: str
 
 

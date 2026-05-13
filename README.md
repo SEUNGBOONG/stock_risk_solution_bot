@@ -1,62 +1,57 @@
 # stock_risk_solution_bot
 
-한국투자증권 API 연동 기반으로 통합 포트폴리오를 분석하고, 결과를 Slack/Notion으로 자동 리포팅하는 프로젝트입니다.
+한국투자증권(KIS) 계좌 잔고를 가져와 포트폴리오 리스크를 계산하고, Slack/Notion으로 결과를 전송하는 자동 분석 봇입니다.
 
-## What It Does
+## 현재 구조
 
-- 일반 위탁 + ISA 계좌 포지션 통합 조회 (KIS API)
-- 95% VaR, 위기 스트레스 손실 추정, 액션 가이드 생성
-- 보유 종목 상관관계 행렬 및 분산 조언
-- 국내/나스닥 저평가 스캔 (PER/PBR/ROE/배당 기반 점수화)
-- USD/KRW 환율 적정성 분석
-- Slack 요약 전송 + Notion DB 기록
-- GitHub Actions: **국내장 개장** / **미국장 개장** 각각 스케줄 + 수동 통합 실행
-- Slack: **통합 1통 + 계좌별 메시지 분리** (같은 실행에서 연속 전송)
-- Notion: 실행마다 TOTAL + 각 계좌 행, 제목에 `[국내장]` / `[미국장]` / `[통합]` 구분
+```text
+.
+├── .github/workflows/
+│   ├── ci.yml                    # Push/PR 빌드 검증: 의존성 설치 + compileall
+│   ├── daily-analysis.yml         # 수동 실행: full/domestic/overseas 선택
+│   ├── portfolio-kr-open.yml      # 국내장 개장 직후 스케줄 실행
+│   └── portfolio-us-open.yml      # 미국장 개장 직후 스케줄 실행
+├── data/universes/
+│   ├── kospi200_sample.txt        # 국내 저평가 스캔 대상 샘플
+│   └── nasdaq100_sample.txt       # 나스닥 저평가 스캔 대상 샘플
+├── src/
+│   ├── main.py                    # 실행 진입점
+│   ├── config.py                  # 환경변수 로딩 및 계좌 설정 파싱
+│   ├── kis_client.py              # KIS 잔고 조회 클라이언트
+│   ├── analytics.py               # VaR, 스트레스 손실, 상관관계, 저평가/환율 분석
+│   └── reporting.py               # Slack/Notion 메시지 생성 및 전송
+├── requirements.txt
+└── .env.example
+```
 
-## GitHub Actions 워크플로
+## 실행 흐름
 
-| 파일 | 설명 |
-|------|------|
-| `portfolio-kr-open.yml` | 평일 **KST 09:00** 직후 — `RUN_MODE=domestic` (국내 PER/PBR 스캔 + 포트폴리오) |
-| `portfolio-us-open.yml` | 평일 **UTC 14:35** — `RUN_MODE=overseas` (나스닥 스캔 + 포트폴리오, NY 시간대와 약간 오차 가능) |
-| `daily-analysis.yml` | **수동만** — `full` / `domestic` / `overseas` 선택 |
+1. `src.main`이 환경변수를 읽어 설정을 구성합니다.
+2. `KisClient`가 KIS API 또는 mock 데이터로 계좌별 포지션을 가져옵니다.
+3. `analytics.py`가 전체/계좌별 리스크, 상관관계, 저평가 후보, USD/KRW 상태를 계산합니다.
+4. `reporting.py`가 Slack 메시지와 Notion 페이지를 생성합니다.
 
-GitHub `schedule`은 **UTC**만 지원합니다. 미국장 시각을 더 맞추려면 서머타임에 맞춰 `portfolio-us-open.yml`의 cron을 분기(또는 추가 워크플로)하면 됩니다.
+## GitHub Actions
 
-### 알림이 한 번만 온 경우
+| 파일 | 목적 |
+| --- | --- |
+| `ci.yml` | 코드 빌드 검증 전용. Push/PR에서 실행되며 외부 계좌 API를 호출하지 않습니다. |
+| `daily-analysis.yml` | 수동 분석 실행. `full`, `domestic`, `overseas` 중 선택합니다. |
+| `portfolio-kr-open.yml` | 평일 KST 09:00에 `RUN_MODE=domestic`으로 실행합니다. |
+| `portfolio-us-open.yml` | 평일 UTC 14:35에 `RUN_MODE=overseas`로 실행합니다. 미국 DST 기간에는 시간이 1시간 어긋날 수 있습니다. |
 
-- 해당 시각 워크플로가 **실패**했는지 Actions 로그에서 확인 (yfinance/한투 API 타임아웃 등).
-- 저장소가 **60일간 비활성**이면 GitHub이 scheduled workflow를 중지할 수 있습니다.
-- 포크 저장소는 기본적으로 `schedule`이 비활성일 수 있습니다.
+운영 워크플로는 실제 KIS/Slack/Notion API를 호출합니다. Secrets가 없거나 API가 실패하면 실패하는 것이 정상입니다. 코드 빌드 가능 여부는 `CI` 워크플로에서 확인합니다.
 
-## 환경 변수
-
-로컬 `.env`에서 선택:
-
-- `RUN_MODE=full` — 국내·나스닥 스캔 모두
-- `RUN_MODE=domestic` — 국내 스캔만 (국내장용)
-- `RUN_MODE=overseas` — 나스닥 스캔만 (미국장용)
-
-## Quick Start
-
-1) Python 설치 후 의존성 설치
+## 로컬 실행
 
 ```bash
 pip install -r requirements.txt
-```
-
-2) `.env.example`을 참고해 `.env` 생성
-
-3) 로컬 실행
-
-```bash
 python -m src.main
 ```
 
-## GitHub Actions Secrets
+`.env.example`을 참고해 `.env`를 만들면 됩니다.
 
-다음 시크릿을 저장소에 등록하세요.
+## 필요한 GitHub Secrets
 
 - `NOTION_TOKEN`
 - `NOTION_DATABASE_ID`
@@ -64,12 +59,22 @@ python -m src.main
 - `SLACK_CHANNEL_ID`
 - `KIS_APP_KEY`
 - `KIS_APP_SECRET`
-- `KIS_BASE_URL` (예: `https://openapi.koreainvestment.com:9443`)
-- `KIS_ACCOUNTS` (예: `BROKER_MAIN:12345678:01:domestic,ISA_MAIN:12345678:11:overseas`)
+- `KIS_BASE_URL`
+- `KIS_ACCOUNTS`
 
-## Notion DB Schema (예시)
+`KIS_ACCOUNTS` 형식:
 
-아래 property 이름을 코드와 동일하게 맞추면 바로 저장됩니다.
+```text
+alias:cano:acnt_prdt_cd:market
+```
+
+예:
+
+```text
+BROKER_MAIN:12345678:01:domestic,ISA_MAIN:12345678:11:overseas
+```
+
+## Notion DB Schema 예시
 
 - `Name` (title)
 - `Date` (date)

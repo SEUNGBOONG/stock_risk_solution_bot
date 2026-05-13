@@ -1,9 +1,9 @@
-# 국내 정규장 개장 직후 (KST 월~금 09:00) — GitHub cron 은 UTC 기준
 name: Portfolio KR open
 
 on:
   workflow_dispatch:
   schedule:
+    # KST 09:00, Monday-Friday. GitHub cron uses UTC.
     - cron: "0 0 * * 1-5"
 
 jobs:
@@ -17,13 +17,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run analysis (국내 저평가 스캔)
+      - name: Run analysis
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}

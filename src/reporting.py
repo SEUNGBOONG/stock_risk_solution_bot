@@ -21,7 +21,7 @@ def _corr_block(corr: pd.DataFrame, corr_advice: str) -> str:
     corr_txt = "n/a"
     if not corr.empty:
         corr_txt = corr.to_string(max_rows=8, max_cols=8)
-    return f"*상관관계 관제:* {corr_advice}\n```{corr_txt}```\n"
+    return f"*상관관계 관리* {corr_advice}\n```{corr_txt}```\n"
 
 
 def _quant_block(
@@ -29,18 +29,16 @@ def _quant_block(
     domestic_picks: List[Dict[str, float | str]],
     nasdaq_picks: List[Dict[str, float | str]],
 ) -> str:
+    empty = "데이터 없음 (지표 부족 또는 외부 API 응답 없음)"
     if run_mode == "domestic":
-        body = format_picks_for_slack(domestic_picks, "데이터 없음 (지표 부족 또는 API 지연)")
-        return f"*국내 저평가 스캔 (PER·PBR·ROE·배당 점수화)*\n{body}\n"
+        body = format_picks_for_slack(domestic_picks, empty)
+        return f"*국내 저평가 스캔 (PER/PBR/ROE/배당 점수)*\n{body}\n"
     if run_mode == "overseas":
-        body = format_picks_for_slack(nasdaq_picks, "데이터 없음 (지표 부족 또는 API 지연)")
-        return f"*나스닥 저평가 스캔 (PER·PBR·ROE·배당 점수화)*\n{body}\n"
-    d = format_picks_for_slack(domestic_picks, "데이터 없음")
-    n = format_picks_for_slack(nasdaq_picks, "데이터 없음")
-    return (
-        f"*국내 저평가 TOP*\n{d}\n\n"
-        f"*나스닥 저평가 TOP*\n{n}\n"
-    )
+        body = format_picks_for_slack(nasdaq_picks, empty)
+        return f"*나스닥 저평가 스캔 (PER/PBR/ROE/배당 점수)*\n{body}\n"
+    d = format_picks_for_slack(domestic_picks, empty)
+    n = format_picks_for_slack(nasdaq_picks, empty)
+    return f"*국내 저평가 TOP*\n{d}\n\n*나스닥 저평가 TOP*\n{n}\n"
 
 
 def _build_account_sections(
@@ -80,7 +78,7 @@ def format_slack_message_total(
     account_sections = _build_account_sections(account_results)
     quant = _quant_block(run_mode, domestic_picks, nasdaq_picks)
     return (
-        f"*[포트폴리오·통합] {session}*\n"
+        f"*[포트폴리오 리스크] {session}*\n"
         f"- 총자산: {risk.total_asset_krw:,.0f} KRW\n"
         f"- 95% VaR(1D): {risk.var_95_krw:,.0f} KRW\n"
         f"- 스트레스 손실(위기 시나리오): {risk.stress_loss_krw:,.0f} KRW\n"
@@ -90,8 +88,10 @@ def format_slack_message_total(
         f"{quant}"
         f"{_corr_block(corr, corr_advice)}"
         "*환율 분석*\n"
-        f"- 현재 USD/KRW: {fx['current']:.2f}\n"
-        f"- MA20: {fx['ma20']:.2f}, MA120: {fx['ma120']:.2f}, 1Y 평균: {fx['mean_1y']:.2f}\n"
+        f"- 현재 USD/KRW: {float(fx['current']):.2f}\n"
+        f"- MA20: {float(fx['ma20']):.2f}, "
+        f"MA120: {float(fx['ma120']):.2f}, "
+        f"1Y 평균: {float(fx['mean_1y']):.2f}\n"
         f"- 전략: {fx['view']}"
     )
 
@@ -105,14 +105,14 @@ def format_slack_message_account(
 ) -> str:
     session = _session_label(run_mode)
     return (
-        f"*[포트폴리오·{alias}] {session}*\n"
+        f"*[포트폴리오/{alias}] {session}*\n"
         f"- 자산: {risk.total_asset_krw:,.0f} KRW\n"
         f"- 95% VaR(1D): {risk.var_95_krw:,.0f} KRW\n"
         f"- 스트레스 손실: {risk.stress_loss_krw:,.0f} KRW\n"
         f"- 가이드: {risk.action_guide}\n"
         f"- 분산 조언: {corr_advice}\n\n"
         "*환율 (참고)*\n"
-        f"- USD/KRW {fx['current']:.2f} — {fx['view']}"
+        f"- USD/KRW {float(fx['current']):.2f} -> {fx['view']}"
     )
 
 
@@ -242,7 +242,7 @@ def insert_notion_rows(
     account_sections = _build_account_sections(account_results).strip()
     total_summary = (
         f"[{session}] 가이드: {risk.action_guide}\n"
-        f"계좌별:\n{account_sections}\n"
+        f"계좌별\n{account_sections}\n"
         f"국내:\n{dom_detail or '(생략)'}\n"
         f"나스닥:\n{nas_detail or '(생략)'}\n"
         f"상관: {corr_advice}\n환율: {fx['view']}"
