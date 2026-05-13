@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 import httpx
 
@@ -55,11 +55,29 @@ class KisClient:
         if self.settings.use_mock_balance:
             return self._mock_positions()
         all_positions: List[Position] = []
+        errors: List[str] = []
         for account in self.settings.kis_accounts:
-            if account.market == "domestic":
-                all_positions.extend(self._fetch_domestic_positions(account))
-            else:
-                all_positions.extend(self._fetch_overseas_positions(account))
+            fetchers: List[tuple[str, Callable[[AccountConfig], List[Position]]]] = []
+            if account.market in {"domestic", "all"}:
+                fetchers.append(("domestic", self._fetch_domestic_positions))
+            if account.market in {"overseas", "all"}:
+                fetchers.append(("overseas", self._fetch_overseas_positions))
+
+            for market, fetcher in fetchers:
+                try:
+                    all_positions.extend(fetcher(account))
+                except httpx.HTTPStatusError as exc:
+                    errors.append(
+                        f"{account.alias}/{market}: HTTP {exc.response.status_code} "
+                        f"{exc.response.text[:300]}"
+                    )
+                except Exception as exc:
+                    errors.append(f"{account.alias}/{market}: {exc}")
+
+        if errors and not all_positions:
+            raise RuntimeError("KIS position fetch failed for all accounts: " + " | ".join(errors))
+        for error in errors:
+            print(f"[kis] warning: {error}")
         return all_positions
 
     def _fetch_domestic_positions(self, account: AccountConfig) -> List[Position]:

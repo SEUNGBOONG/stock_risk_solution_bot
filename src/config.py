@@ -14,7 +14,7 @@ class AccountConfig:
     alias: str
     cano: str
     acnt_prdt_cd: str
-    market: str  # domestic | overseas
+    market: str  # domestic | overseas | all
 
 
 @dataclass(frozen=True)
@@ -38,10 +38,11 @@ def _parse_accounts(raw: str) -> List[AccountConfig]:
     out: List[AccountConfig] = []
     for chunk in raw.split(","):
         parts = [x.strip() for x in chunk.split(":")]
-        if len(parts) != 4:
+        if len(parts) not in {3, 4}:
             raise ValueError(f"Invalid KIS_ACCOUNTS item: {chunk}")
-        alias, cano, acnt_prdt_cd, market = parts
-        if market not in {"domestic", "overseas"}:
+        alias, cano, acnt_prdt_cd = parts[:3]
+        market = parts[3] if len(parts) == 4 else "all"
+        if market not in {"domestic", "overseas", "all"}:
             raise ValueError(f"Invalid market for account {alias}: {market}")
         out.append(
             AccountConfig(
@@ -58,7 +59,7 @@ def load_settings() -> Settings:
     mode = os.getenv("RUN_MODE", "full").strip().lower()
     if mode not in {"full", "domestic", "overseas"}:
         mode = "full"
-    return Settings(
+    settings = Settings(
         notion_token=os.getenv("NOTION_TOKEN", ""),
         notion_database_id=os.getenv("NOTION_DATABASE_ID", ""),
         slack_bot_token=os.getenv("SLACK_BOT_TOKEN", ""),
@@ -72,3 +73,19 @@ def load_settings() -> Settings:
         use_mock_balance=os.getenv("USE_MOCK_BALANCE", "false").lower() == "true",
         run_mode=mode,
     )
+    _validate_settings(settings)
+    return settings
+
+
+def _validate_settings(settings: Settings) -> None:
+    missing = []
+    if not settings.kis_app_key:
+        missing.append("KIS_APP_KEY")
+    if not settings.kis_app_secret:
+        missing.append("KIS_APP_SECRET")
+    if not settings.kis_base_url:
+        missing.append("KIS_BASE_URL")
+    if not settings.kis_accounts and not settings.use_mock_balance:
+        missing.append("KIS_ACCOUNTS")
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")

@@ -9,8 +9,7 @@
 ├── .github/workflows/
 │   ├── ci.yml                    # Push/PR 빌드 검증: 의존성 설치 + compileall
 │   ├── daily-analysis.yml         # 수동 실행: full/domestic/overseas 선택
-│   ├── portfolio-kr-open.yml      # 국내장 개장 직후 스케줄 실행
-│   └── portfolio-us-open.yml      # 미국장 개장 직후 스케줄 실행
+│   └── morning-report.yml         # 평일 아침 통합 포트폴리오 리포트
 ├── data/universes/
 │   ├── kospi200_sample.txt        # 국내 저평가 스캔 대상 샘플
 │   └── nasdaq100_sample.txt       # 나스닥 저평가 스캔 대상 샘플
@@ -37,8 +36,7 @@
 | --- | --- |
 | `ci.yml` | 코드 빌드 검증 전용. Push/PR에서 실행되며 외부 계좌 API를 호출하지 않습니다. |
 | `daily-analysis.yml` | 수동 분석 실행. `full`, `domestic`, `overseas` 중 선택합니다. |
-| `portfolio-kr-open.yml` | 평일 KST 09:00에 `RUN_MODE=domestic`으로 실행합니다. |
-| `portfolio-us-open.yml` | 평일 UTC 14:35에 `RUN_MODE=overseas`로 실행합니다. 미국 DST 기간에는 시간이 1시간 어긋날 수 있습니다. |
+| `morning-report.yml` | 평일 KST 08:30에 `RUN_MODE=full`로 실행합니다. 전체 포트폴리오, 계좌별 리스크, 국내/해외 저평가 후보를 한 번에 보냅니다. |
 
 운영 워크플로는 실제 KIS/Slack/Notion API를 호출합니다. Secrets가 없거나 API가 실패하면 실패하는 것이 정상입니다. 코드 빌드 가능 여부는 `CI` 워크플로에서 확인합니다.
 
@@ -62,17 +60,19 @@ python -m src.main
 - `KIS_BASE_URL`
 - `KIS_ACCOUNTS`
 
-`KIS_ACCOUNTS` 형식:
+`KIS_ACCOUNTS` 권장 형식:
 
 ```text
-alias:cano:acnt_prdt_cd:market
+alias:cano:acnt_prdt_cd
 ```
 
 예:
 
 ```text
-BROKER_MAIN:12345678:01:domestic,ISA_MAIN:12345678:11:overseas
+BROKER_MAIN:12345678:01,ISA_MAIN:12345678:11
 ```
+
+이 형식은 각 계좌에서 국내/해외 잔고를 모두 조회합니다. 특정 계좌를 한 시장으로 제한해야 하면 `:domestic` 또는 `:overseas`를 네 번째 값으로 붙일 수 있습니다.
 
 ## Notion DB Schema 예시
 

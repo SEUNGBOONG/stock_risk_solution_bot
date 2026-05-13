@@ -1,16 +1,16 @@
-name: Portfolio KR open
+name: Portfolio morning report
 
 on:
   workflow_dispatch:
   schedule:
-    # KST 09:00, Monday-Friday. GitHub cron uses UTC.
-    - cron: "0 0 * * 1-5"
+    # Weekdays 08:30 KST. GitHub cron uses UTC, so this is 23:30 Sunday-Thursday.
+    - cron: "30 23 * * 0-4"
 
 jobs:
   analyze:
     runs-on: ubuntu-latest
     env:
-      RUN_MODE: domestic
+      RUN_MODE: full
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run analysis
+      - name: Run morning report
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
