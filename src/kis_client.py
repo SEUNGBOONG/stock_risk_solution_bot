@@ -103,6 +103,7 @@ class KisClient:
             res = client.get(url, headers=self._base_headers("TTTC8434R"), params=params)
             res.raise_for_status()
             data = res.json()
+        self._log_kis_response(account.alias, "domestic", data)
         rows = data.get("output1", [])
         positions: List[Position] = []
         for row in rows:
@@ -138,6 +139,7 @@ class KisClient:
             res = client.get(url, headers=self._base_headers("CTRP6504R"), params=params)
             res.raise_for_status()
             data = res.json()
+        self._log_kis_response(account.alias, "overseas", data)
         rows = data.get("output1", [])
         positions: List[Position] = []
         for row in rows:
@@ -212,6 +214,18 @@ class KisClient:
             Position("ISA_MAIN", "MSFT", 2, 900000, "equity"),
             Position("ISA_MAIN", "QQQ", 3, 1800000, "equity"),
         ]
+
+    def _log_kis_response(self, alias: str, market: str, data: Dict[str, object]) -> None:
+        output1 = data.get("output1")
+        row_count = len(output1) if isinstance(output1, list) else 0
+        print(
+            f"[kis] {alias}/{market} response: "
+            f"rt_cd={data.get('rt_cd')} msg_cd={data.get('msg_cd')} "
+            f"msg={data.get('msg1')} rows={row_count}"
+        )
+        if row_count == 0:
+            keys = ", ".join(sorted(data.keys()))
+            print(f"[kis] {alias}/{market} empty output1; response keys: {keys}")
 
 
 def _to_float(value: object) -> float | None:
