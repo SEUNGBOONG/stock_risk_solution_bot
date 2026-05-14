@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Callable, Dict, List
 
 import httpx
@@ -23,23 +24,31 @@ class KisClient:
         self._tokens: Dict[str, str] = {}
 
     def _ensure_token(self, account: AccountConfig) -> str:
-        if account.alias in self._tokens:
-            return self._tokens[account.alias]
+        token_key = account.app_key
+        if token_key in self._tokens:
+            return self._tokens[token_key]
         url = f"{self.settings.kis_base_url}/oauth2/tokenP"
         payload = {
             "grant_type": "client_credentials",
             "appkey": account.app_key,
             "appsecret": account.app_secret,
         }
-        with httpx.Client(timeout=20.0) as client:
-            res = client.post(url, json=payload)
-            res.raise_for_status()
-            data = res.json()
+        data = self._request_token_with_retry(url, payload)
         token = data.get("access_token")
         if not token:
             raise RuntimeError(f"KIS token response missing access_token: {data}")
-        self._tokens[account.alias] = token
+        self._tokens[token_key] = token
         return token
+
+    def _request_token_with_retry(self, url: str, payload: Dict[str, str]) -> Dict[str, object]:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.post(url, json=payload)
+            if res.status_code == 403 and "EGW00133" in res.text:
+                print("[kis] token rate limit hit; waiting 65 seconds before retry")
+                time.sleep(65)
+                res = client.post(url, json=payload)
+            res.raise_for_status()
+            return res.json()
 
     def _base_headers(self, account: AccountConfig, tr_id: str) -> Dict[str, str]:
         return {
