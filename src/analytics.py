@@ -79,7 +79,6 @@ def calc_risk_metrics(positions: List[Position]) -> RiskResult:
     z = norm.ppf(alpha)
     daily_var = max(0.0, (z * port_vol - port_mean) * total_asset)
 
-    # Crisis-like one-day stress shock.
     stress_loss = total_asset * 0.11
 
     ratio = daily_var / total_asset if total_asset else 0.0
@@ -123,10 +122,19 @@ def build_diversification_advice(corr: pd.DataFrame) -> str:
 def _roe_as_ratio(roe: float | None) -> float | None:
     if roe is None:
         return None
-    r = float(roe)
-    if abs(r) > 1.5:
-        return r / 100.0
-    return r
+    value = float(roe)
+    if abs(value) > 1.5:
+        return value / 100.0
+    return value
+
+
+def _yield_as_ratio(dividend_yield: float | None) -> float:
+    if dividend_yield is None:
+        return 0.0
+    value = float(dividend_yield)
+    if value > 0.2:
+        return value / 100.0
+    return value
 
 
 def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, float | str]]:
@@ -140,13 +148,12 @@ def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, floa
             continue
         pe = info.get("trailingPE") or info.get("forwardPE")
         pb = info.get("priceToBook")
-        roe_raw = info.get("returnOnEquity")
-        roe = _roe_as_ratio(roe_raw)
-        dy = info.get("dividendYield")
+        roe = _roe_as_ratio(info.get("returnOnEquity"))
+        dy = _yield_as_ratio(info.get("dividendYield"))
         if pe is None or pb is None or roe is None:
             continue
         score = (1 / max(pe, 0.1)) * 30 + (1 / max(pb, 0.1)) * 25 + max(roe, 0) * 35 + (
-            (dy or 0) * 10
+            dy * 10
         )
         rows.append(
             {
@@ -154,7 +161,7 @@ def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, floa
                 "per": float(pe),
                 "pbr": float(pb),
                 "roe": float(roe),
-                "dividend_yield": float(dy or 0),
+                "dividend_yield": float(dy),
                 "score": float(score),
             }
         )
@@ -167,10 +174,8 @@ def format_picks_for_slack(picks: List[Dict[str, float | str]], empty_label: str
         return empty_label
     lines: List[str] = []
     for p in picks:
-        roe = float(p["roe"])
-        roe_pct = roe * 100.0 if abs(roe) <= 1.5 else roe
-        dy = float(p["dividend_yield"])
-        dy_pct = dy * 100.0 if dy <= 1.0 else dy
+        roe_pct = float(p["roe"]) * 100.0
+        dy_pct = float(p["dividend_yield"]) * 100.0
         lines.append(
             f"- `{p['symbol']}` PER {float(p['per']):.1f} | PBR {float(p['pbr']):.2f} | "
             f"ROE {roe_pct:.1f}% | 배당 {dy_pct:.2f}% | 점수 {float(p['score']):.1f}"
@@ -195,6 +200,8 @@ def fx_fairness_analysis() -> Dict[str, float | str]:
         return empty_result
 
     usdkrw = raw["Close"].dropna()
+    if isinstance(usdkrw, pd.DataFrame):
+        usdkrw = usdkrw.iloc[:, 0]
     if usdkrw.empty:
         return empty_result
 

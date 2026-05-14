@@ -26,6 +26,11 @@ def run() -> None:
     client = KisClient(settings)
 
     positions = client.fetch_all_positions()
+    if not positions and not settings.use_mock_balance:
+        raise RuntimeError(
+            "KIS returned zero positions. Check KIS_ACCOUNTS format, account product "
+            "code, KIS app permissions, and whether the account has API-visible holdings."
+        )
     risk = calc_risk_metrics(positions)
     corr = calc_correlation_matrix(positions)
     corr_advice = build_diversification_advice(corr)

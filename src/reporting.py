@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import httpx
 import pandas as pd
@@ -170,9 +170,54 @@ def post_slack_separate_reports(
         )
 
 
+def _notion_headers(notion_token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {notion_token}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+
+
+def _fetch_notion_schema(
+    client: httpx.Client, notion_token: str, database_id: str
+) -> Dict[str, Any]:
+    res = client.get(
+        f"https://api.notion.com/v1/databases/{database_id}",
+        headers=_notion_headers(notion_token),
+    )
+    res.raise_for_status()
+    return res.json().get("properties", {})
+
+
+def _title_property_name(schema: Dict[str, Any]) -> str | None:
+    for name, meta in schema.items():
+        if meta.get("type") == "title":
+            return name
+    return None
+
+
+def _add_if_supported(
+    props: Dict[str, Any],
+    schema: Dict[str, Any],
+    name: str,
+    notion_type: str,
+    value: Any,
+) -> None:
+    if schema.get(name, {}).get("type") != notion_type:
+        return
+    if notion_type == "number":
+        props[name] = {"number": float(value)}
+    elif notion_type == "date":
+        props[name] = {"date": {"start": str(value)}}
+    elif notion_type == "rich_text":
+        props[name] = {"rich_text": [{"text": {"content": str(value)[:1900]}}]}
+
+
 def _create_notion_page(
+    client: httpx.Client,
     notion_token: str,
     database_id: str,
+    schema: Dict[str, Any],
     title: str,
     total_asset_krw: float,
     var_95_krw: float,
@@ -183,31 +228,35 @@ def _create_notion_page(
     fx_view: str,
     summary: str,
 ) -> None:
-    url = "https://api.notion.com/v1/pages"
-    headers = {
-        "Authorization": f"Bearer {notion_token}",
-        "Notion-Version": "2022-06-28",
-        "Content-Type": "application/json",
-    }
+    title_name = _title_property_name(schema)
+    if not title_name:
+        raise RuntimeError("Notion database has no title property")
+
     now = datetime.now(timezone.utc).date().isoformat()
+    props: Dict[str, Any] = {
+        title_name: {"title": [{"text": {"content": title[:200]}}]},
+    }
+    _add_if_supported(props, schema, "Date", "date", now)
+    _add_if_supported(props, schema, "TotalAsset", "number", total_asset_krw)
+    _add_if_supported(props, schema, "VaR95", "number", var_95_krw)
+    _add_if_supported(props, schema, "StressLoss", "number", stress_loss_krw)
+    _add_if_supported(props, schema, "DomesticTop5", "rich_text", domestic_top5)
+    _add_if_supported(props, schema, "NasdaqTop5", "rich_text", nasdaq_top5)
+    _add_if_supported(props, schema, "CorrelationAdvice", "rich_text", corr_advice)
+    _add_if_supported(props, schema, "FxView", "rich_text", fx_view)
+    _add_if_supported(props, schema, "Summary", "rich_text", summary)
+
     payload = {
         "parent": {"database_id": database_id},
-        "properties": {
-            "Name": {"title": [{"text": {"content": title[:200]}}]},
-            "Date": {"date": {"start": now}},
-            "TotalAsset": {"number": total_asset_krw},
-            "VaR95": {"number": var_95_krw},
-            "StressLoss": {"number": stress_loss_krw},
-            "DomesticTop5": {"rich_text": [{"text": {"content": domestic_top5[:1900]}}]},
-            "NasdaqTop5": {"rich_text": [{"text": {"content": nasdaq_top5[:1900]}}]},
-            "CorrelationAdvice": {"rich_text": [{"text": {"content": corr_advice[:1900]}}]},
-            "FxView": {"rich_text": [{"text": {"content": fx_view[:1900]}}]},
-            "Summary": {"rich_text": [{"text": {"content": summary[:1900]}}]},
-        },
+        "properties": props,
     }
-    with httpx.Client(timeout=20.0) as client:
-        res = client.post(url, headers=headers, json=payload)
-        res.raise_for_status()
+    res = client.post(
+        "https://api.notion.com/v1/pages",
+        headers=_notion_headers(notion_token),
+        json=payload,
+    )
+    if res.status_code >= 400:
+        raise RuntimeError(f"Notion page create failed: {res.status_code} {res.text[:1000]}")
 
 
 def _picks_compact_with_metrics(picks: List[Dict[str, float | str]]) -> str:
@@ -234,6 +283,40 @@ def insert_notion_rows(
 ) -> None:
     if not notion_token or not database_id:
         return
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            schema = _fetch_notion_schema(client, notion_token, database_id)
+            _insert_notion_rows_with_schema(
+                client,
+                notion_token,
+                database_id,
+                schema,
+                run_mode,
+                risk,
+                domestic_picks,
+                nasdaq_picks,
+                corr_advice,
+                fx,
+                account_results,
+            )
+    except Exception as exc:
+        print(f"[notion] warning: Notion write skipped: {exc}")
+
+
+def _insert_notion_rows_with_schema(
+    client: httpx.Client,
+    notion_token: str,
+    database_id: str,
+    schema: Dict[str, Any],
+    run_mode: str,
+    risk: RiskResult,
+    domestic_picks: List[Dict[str, float | str]],
+    nasdaq_picks: List[Dict[str, float | str]],
+    corr_advice: str,
+    fx: Dict[str, float | str],
+    account_results: Dict[str, Dict[str, RiskResult | str]],
+) -> None:
     session = _session_label(run_mode)
     dom_detail = format_picks_for_slack(domestic_picks, "")
     nas_detail = format_picks_for_slack(nasdaq_picks, "")
@@ -248,8 +331,10 @@ def insert_notion_rows(
         f"상관: {corr_advice}\n환율: {fx['view']}"
     )
     _create_notion_page(
+        client=client,
         notion_token=notion_token,
         database_id=database_id,
+        schema=schema,
         title=f"Portfolio - TOTAL [{session}]",
         total_asset_krw=risk.total_asset_krw,
         var_95_krw=risk.var_95_krw,
@@ -272,8 +357,10 @@ def insert_notion_rows(
             f"상관: {alias_corr_advice}\n환율: {fx['view']}"
         )
         _create_notion_page(
+            client=client,
             notion_token=notion_token,
             database_id=database_id,
+            schema=schema,
             title=f"Portfolio - {alias} [{session}]",
             total_asset_krw=alias_risk.total_asset_krw,
             var_95_krw=alias_risk.var_95_krw,

@@ -65,7 +65,9 @@ class KisClient:
 
             for market, fetcher in fetchers:
                 try:
-                    all_positions.extend(fetcher(account))
+                    positions = fetcher(account)
+                    print(f"[kis] {account.alias}/{market}: {len(positions)} positions")
+                    all_positions.extend(positions)
                 except httpx.HTTPStatusError as exc:
                     errors.append(
                         f"{account.alias}/{market}: HTTP {exc.response.status_code} "
