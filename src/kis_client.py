@@ -20,16 +20,16 @@ class Position:
 class KisClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._token: str | None = None
+        self._tokens: Dict[str, str] = {}
 
-    def _ensure_token(self) -> str:
-        if self._token:
-            return self._token
+    def _ensure_token(self, account: AccountConfig) -> str:
+        if account.alias in self._tokens:
+            return self._tokens[account.alias]
         url = f"{self.settings.kis_base_url}/oauth2/tokenP"
         payload = {
             "grant_type": "client_credentials",
-            "appkey": self.settings.kis_app_key,
-            "appsecret": self.settings.kis_app_secret,
+            "appkey": account.app_key,
+            "appsecret": account.app_secret,
         }
         with httpx.Client(timeout=20.0) as client:
             res = client.post(url, json=payload)
@@ -38,14 +38,14 @@ class KisClient:
         token = data.get("access_token")
         if not token:
             raise RuntimeError(f"KIS token response missing access_token: {data}")
-        self._token = token
+        self._tokens[account.alias] = token
         return token
 
-    def _base_headers(self, tr_id: str) -> Dict[str, str]:
+    def _base_headers(self, account: AccountConfig, tr_id: str) -> Dict[str, str]:
         return {
-            "authorization": f"Bearer {self._ensure_token()}",
-            "appkey": self.settings.kis_app_key,
-            "appsecret": self.settings.kis_app_secret,
+            "authorization": f"Bearer {self._ensure_token(account)}",
+            "appkey": account.app_key,
+            "appsecret": account.app_secret,
             "tr_id": tr_id,
             "custtype": "P",
             "content-type": "application/json; charset=utf-8",
@@ -100,7 +100,7 @@ class KisClient:
             "CTX_AREA_NK100": "",
         }
         with httpx.Client(timeout=20.0) as client:
-            res = client.get(url, headers=self._base_headers("TTTC8434R"), params=params)
+            res = client.get(url, headers=self._base_headers(account, "TTTC8434R"), params=params)
             res.raise_for_status()
             data = res.json()
         self._log_kis_response(account.alias, "domestic", data)
@@ -136,7 +136,7 @@ class KisClient:
             "INQR_DVSN_CD": "00",
         }
         with httpx.Client(timeout=20.0) as client:
-            res = client.get(url, headers=self._base_headers("CTRP6504R"), params=params)
+            res = client.get(url, headers=self._base_headers(account, "CTRP6504R"), params=params)
             res.raise_for_status()
             data = res.json()
         self._log_kis_response(account.alias, "overseas", data)
@@ -161,11 +161,14 @@ class KisClient:
     def domestic_value_scan(self, symbols: List[str], top_n: int = 5) -> List[Dict[str, float | str]]:
         from .analytics import rank_value_rows
 
+        if not self.settings.kis_accounts:
+            return []
+        account = self.settings.kis_accounts[0]
         rows: List[Dict[str, float | str]] = []
         for symbol in symbols:
             code = symbol.replace(".KS", "").replace(".KQ", "")
             try:
-                row = self._fetch_domestic_valuation(code)
+                row = self._fetch_domestic_valuation(account, code)
             except httpx.HTTPStatusError as exc:
                 print(
                     f"[kis] domestic valuation failed for {code}: "
@@ -179,7 +182,7 @@ class KisClient:
                 rows.append(row)
         return rank_value_rows(rows, top_n=top_n)
 
-    def _fetch_domestic_valuation(self, code: str) -> Dict[str, float | str] | None:
+    def _fetch_domestic_valuation(self, account: AccountConfig, code: str) -> Dict[str, float | str] | None:
         from .analytics import _score_value_row
 
         url = (
@@ -191,7 +194,7 @@ class KisClient:
             "FID_INPUT_ISCD": code,
         }
         with httpx.Client(timeout=20.0) as client:
-            res = client.get(url, headers=self._base_headers("FHKST01010100"), params=params)
+            res = client.get(url, headers=self._base_headers(account, "FHKST01010100"), params=params)
             res.raise_for_status()
             data = res.json()
         output = data.get("output") or {}

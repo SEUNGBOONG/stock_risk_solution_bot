@@ -55,24 +55,32 @@ python -m src.main
 - `NOTION_DATABASE_ID`
 - `SLACK_BOT_TOKEN`
 - `SLACK_CHANNEL_ID`
-- `KIS_APP_KEY`
-- `KIS_APP_SECRET`
 - `KIS_BASE_URL`
 - `KIS_ACCOUNTS`
+- `KIS_BROKER_APP_KEY`
+- `KIS_BROKER_APP_SECRET`
+- `KIS_ISA_APP_KEY`
+- `KIS_ISA_APP_SECRET`
 
 `KIS_ACCOUNTS` 권장 형식:
 
 ```text
-alias:cano:acnt_prdt_cd
+alias:cano:acnt_prdt_cd:app_key_secret_name:app_secret_secret_name
 ```
 
 예:
 
 ```text
-BROKER_MAIN:12345678:01,ISA_MAIN:12345678:11
+BROKER_MAIN:67921683:01:KIS_BROKER_APP_KEY:KIS_BROKER_APP_SECRET,ISA_MAIN:44541512:01:KIS_ISA_APP_KEY:KIS_ISA_APP_SECRET
 ```
 
-이 형식은 각 계좌에서 국내/해외 잔고를 모두 조회합니다. 특정 계좌를 한 시장으로 제한해야 하면 `:domestic` 또는 `:overseas`를 네 번째 값으로 붙일 수 있습니다.
+이 형식은 각 계좌에서 국내/해외 잔고를 모두 조회합니다. 두 계좌가 서로 다른 KIS 앱키를 쓰는 경우 위처럼 계좌별 Secret 이름을 붙여야 합니다.
+
+기존처럼 모든 계좌가 같은 앱키를 공유하면 `KIS_APP_KEY`, `KIS_APP_SECRET`을 쓰고 아래 형식도 사용할 수 있습니다.
+
+```text
+BROKER_MAIN:67921683:01,ISA_MAIN:44541512:01
+```
 
 ## Notion DB Schema 예시
 

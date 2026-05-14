@@ -15,6 +15,8 @@ class AccountConfig:
     cano: str
     acnt_prdt_cd: str
     market: str  # domestic | overseas | all
+    app_key: str
+    app_secret: str
 
 
 @dataclass(frozen=True)
@@ -38,10 +40,23 @@ def _parse_accounts(raw: str) -> List[AccountConfig]:
     out: List[AccountConfig] = []
     for chunk in raw.split(","):
         parts = [x.strip() for x in chunk.split(":")]
-        if len(parts) not in {3, 4}:
+        if len(parts) not in {3, 4, 5, 6}:
             raise ValueError(f"Invalid KIS_ACCOUNTS item: {chunk}")
         alias, cano, acnt_prdt_cd = parts[:3]
-        market = parts[3] if len(parts) == 4 else "all"
+        market = "all"
+        app_key = os.getenv("KIS_APP_KEY", "")
+        app_secret = os.getenv("KIS_APP_SECRET", "")
+
+        if len(parts) == 4:
+            market = parts[3]
+        elif len(parts) == 5:
+            app_key = _secret_value(parts[3])
+            app_secret = _secret_value(parts[4])
+        elif len(parts) == 6:
+            market = parts[3]
+            app_key = _secret_value(parts[4])
+            app_secret = _secret_value(parts[5])
+
         if market not in {"domestic", "overseas", "all"}:
             raise ValueError(f"Invalid market for account {alias}: {market}")
         out.append(
@@ -50,9 +65,20 @@ def _parse_accounts(raw: str) -> List[AccountConfig]:
                 cano=cano,
                 acnt_prdt_cd=acnt_prdt_cd,
                 market=market,
+                app_key=app_key,
+                app_secret=app_secret,
             )
         )
     return out
+
+
+def _secret_value(name_or_value: str) -> str:
+    value = os.getenv(name_or_value)
+    if value is not None:
+        return value
+    if name_or_value.startswith("KIS_"):
+        return ""
+    return name_or_value
 
 
 def load_settings() -> Settings:
@@ -79,13 +105,14 @@ def load_settings() -> Settings:
 
 def _validate_settings(settings: Settings) -> None:
     missing = []
-    if not settings.kis_app_key:
-        missing.append("KIS_APP_KEY")
-    if not settings.kis_app_secret:
-        missing.append("KIS_APP_SECRET")
     if not settings.kis_base_url:
         missing.append("KIS_BASE_URL")
     if not settings.kis_accounts and not settings.use_mock_balance:
         missing.append("KIS_ACCOUNTS")
+    for account in settings.kis_accounts:
+        if not account.app_key:
+            missing.append(f"{account.alias}.app_key")
+        if not account.app_secret:
+            missing.append(f"{account.alias}.app_secret")
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")

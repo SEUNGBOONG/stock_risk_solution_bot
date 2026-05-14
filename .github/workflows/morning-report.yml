@@ -32,6 +32,10 @@ jobs:
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          KIS_BROKER_APP_KEY: ${{ secrets.KIS_BROKER_APP_KEY }}
+          KIS_BROKER_APP_SECRET: ${{ secrets.KIS_BROKER_APP_SECRET }}
+          KIS_ISA_APP_KEY: ${{ secrets.KIS_ISA_APP_KEY }}
+          KIS_ISA_APP_SECRET: ${{ secrets.KIS_ISA_APP_SECRET }}
           KIS_BASE_URL: ${{ secrets.KIS_BASE_URL }}
           KIS_ACCOUNTS: ${{ secrets.KIS_ACCOUNTS }}
           USE_MOCK_BALANCE: "false"
