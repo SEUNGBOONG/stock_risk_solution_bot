@@ -7,6 +7,7 @@ from .analytics import (
     calc_correlation_matrix,
     calc_risk_metrics,
     fx_fairness_analysis,
+    rotating_value_slice,
     undervalued_scan,
 )
 from .config import load_settings
@@ -41,9 +42,14 @@ def run() -> None:
     domestic_picks: list = []
     nasdaq_picks: list = []
     if mode in ("full", "domestic"):
-        domestic_picks = undervalued_scan(kospi_universe, top_n=5)
+        domestic_candidates = client.domestic_value_scan(kospi_universe, top_n=30)
+        if not domestic_candidates:
+            print("[market-data] KIS domestic valuation returned no rows; falling back to yfinance")
+            domestic_candidates = undervalued_scan(kospi_universe, top_n=30)
+        domestic_picks = rotating_value_slice(domestic_candidates, page_size=5, cycle_size=30)
     if mode in ("full", "overseas"):
-        nasdaq_picks = undervalued_scan(nasdaq_universe, top_n=5)
+        nasdaq_candidates = undervalued_scan(nasdaq_universe, top_n=30)
+        nasdaq_picks = rotating_value_slice(nasdaq_candidates, page_size=5, cycle_size=30)
 
     fx = fx_fairness_analysis()
     account_results = {}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -75,10 +76,8 @@ def calc_risk_metrics(positions: List[Position]) -> RiskResult:
     port_mean = float(np.dot(weights, mu))
     port_vol = float(np.sqrt(np.dot(weights.T, np.dot(cov, weights))))
 
-    alpha = 0.95
-    z = norm.ppf(alpha)
+    z = norm.ppf(0.95)
     daily_var = max(0.0, (z * port_vol - port_mean) * total_asset)
-
     stress_loss = total_asset * 0.11
 
     ratio = daily_var / total_asset if total_asset else 0.0
@@ -137,36 +136,76 @@ def _yield_as_ratio(dividend_yield: float | None) -> float:
     return value
 
 
+def _score_value_row(
+    symbol: str,
+    pe: float | None,
+    pb: float | None,
+    roe: float | None,
+    dividend_yield: float | None,
+) -> Dict[str, float | str] | None:
+    roe_ratio = _roe_as_ratio(roe)
+    dy_ratio = _yield_as_ratio(dividend_yield)
+    if pe is None or pb is None:
+        return None
+    pe_value = float(pe)
+    pb_value = float(pb)
+    if pe_value <= 0 or pb_value <= 0:
+        return None
+    roe_component = max(float(roe_ratio or 0.0), 0.0)
+    score = (1 / max(pe_value, 0.1)) * 35 + (1 / max(pb_value, 0.1)) * 35
+    score += roe_component * 25 + dy_ratio * 5
+    return {
+        "symbol": symbol,
+        "per": pe_value,
+        "pbr": pb_value,
+        "roe": float(roe_ratio or 0.0),
+        "dividend_yield": dy_ratio,
+        "score": float(score),
+    }
+
+
+def rank_value_rows(rows: List[Dict[str, float | str]], top_n: int = 5) -> List[Dict[str, float | str]]:
+    rows.sort(key=lambda x: x["score"], reverse=True)
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    return rows[:top_n]
+
+
+def rotating_value_slice(
+    rows: List[Dict[str, float | str]],
+    page_size: int = 5,
+    cycle_size: int = 30,
+) -> List[Dict[str, float | str]]:
+    if not rows:
+        return []
+    candidates = rows[: min(cycle_size, len(rows))]
+    page_count = max(1, (len(candidates) + page_size - 1) // page_size)
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    day_index = today.toordinal()
+    page = day_index % page_count
+    start = page * page_size
+    end = start + page_size
+    return candidates[start:end]
+
+
 def undervalued_scan(universe: List[str], top_n: int = 5) -> List[Dict[str, float | str]]:
     rows: List[Dict[str, float | str]] = []
     for symbol in universe:
         try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
+            info = yf.Ticker(symbol).info
         except Exception as exc:
             print(f"[market-data] fundamentals failed for {symbol}: {exc}")
             continue
-        pe = info.get("trailingPE") or info.get("forwardPE")
-        pb = info.get("priceToBook")
-        roe = _roe_as_ratio(info.get("returnOnEquity"))
-        dy = _yield_as_ratio(info.get("dividendYield"))
-        if pe is None or pb is None or roe is None:
-            continue
-        score = (1 / max(pe, 0.1)) * 30 + (1 / max(pb, 0.1)) * 25 + max(roe, 0) * 35 + (
-            dy * 10
+        row = _score_value_row(
+            symbol=symbol,
+            pe=info.get("trailingPE") or info.get("forwardPE"),
+            pb=info.get("priceToBook"),
+            roe=info.get("returnOnEquity"),
+            dividend_yield=info.get("dividendYield"),
         )
-        rows.append(
-            {
-                "symbol": symbol,
-                "per": float(pe),
-                "pbr": float(pb),
-                "roe": float(roe),
-                "dividend_yield": float(dy),
-                "score": float(score),
-            }
-        )
-    rows.sort(key=lambda x: x["score"], reverse=True)
-    return rows[:top_n]
+        if row:
+            rows.append(row)
+    return rank_value_rows(rows, top_n=top_n)
 
 
 def format_picks_for_slack(picks: List[Dict[str, float | str]], empty_label: str) -> str:
@@ -176,8 +215,10 @@ def format_picks_for_slack(picks: List[Dict[str, float | str]], empty_label: str
     for p in picks:
         roe_pct = float(p["roe"]) * 100.0
         dy_pct = float(p["dividend_yield"]) * 100.0
+        rank = p.get("rank")
+        rank_label = f"#{int(rank)} " if rank is not None else ""
         lines.append(
-            f"- `{p['symbol']}` PER {float(p['per']):.1f} | PBR {float(p['pbr']):.2f} | "
+            f"- {rank_label}`{p['symbol']}` PER {float(p['per']):.1f} | PBR {float(p['pbr']):.2f} | "
             f"ROE {roe_pct:.1f}% | 배당 {dy_pct:.2f}% | 점수 {float(p['score']):.1f}"
         )
     return "\n".join(lines)

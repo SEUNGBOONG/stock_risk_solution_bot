@@ -57,11 +57,10 @@ class KisClient:
         all_positions: List[Position] = []
         errors: List[str] = []
         for account in self.settings.kis_accounts:
-            fetchers: List[tuple[str, Callable[[AccountConfig], List[Position]]]] = []
-            if account.market in {"domestic", "all"}:
-                fetchers.append(("domestic", self._fetch_domestic_positions))
-            if account.market in {"overseas", "all"}:
-                fetchers.append(("overseas", self._fetch_overseas_positions))
+            fetchers: List[tuple[str, Callable[[AccountConfig], List[Position]]]] = [
+                ("domestic", self._fetch_domestic_positions),
+                ("overseas", self._fetch_overseas_positions),
+            ]
 
             for market, fetcher in fetchers:
                 try:
@@ -157,6 +156,54 @@ class KisClient:
                 )
         return positions
 
+    def domestic_value_scan(self, symbols: List[str], top_n: int = 5) -> List[Dict[str, float | str]]:
+        from .analytics import rank_value_rows
+
+        rows: List[Dict[str, float | str]] = []
+        for symbol in symbols:
+            code = symbol.replace(".KS", "").replace(".KQ", "")
+            try:
+                row = self._fetch_domestic_valuation(code)
+            except httpx.HTTPStatusError as exc:
+                print(
+                    f"[kis] domestic valuation failed for {code}: "
+                    f"HTTP {exc.response.status_code} {exc.response.text[:300]}"
+                )
+                continue
+            except Exception as exc:
+                print(f"[kis] domestic valuation failed for {code}: {exc}")
+                continue
+            if row:
+                rows.append(row)
+        return rank_value_rows(rows, top_n=top_n)
+
+    def _fetch_domestic_valuation(self, code: str) -> Dict[str, float | str] | None:
+        from .analytics import _score_value_row
+
+        url = (
+            f"{self.settings.kis_base_url}"
+            "/uapi/domestic-stock/v1/quotations/inquire-price"
+        )
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+        }
+        with httpx.Client(timeout=20.0) as client:
+            res = client.get(url, headers=self._base_headers("FHKST01010100"), params=params)
+            res.raise_for_status()
+            data = res.json()
+        output = data.get("output") or {}
+        pe = _to_float(output.get("per"))
+        pb = _to_float(output.get("pbr"))
+        dividend_yield = _to_float(output.get("dvd_yld"))
+        return _score_value_row(
+            symbol=f"{code}.KS",
+            pe=pe,
+            pb=pb,
+            roe=None,
+            dividend_yield=dividend_yield,
+        )
+
     def _mock_positions(self) -> List[Position]:
         return [
             Position("BROKER_MAIN", "005930.KS", 20, 1700000, "equity"),
@@ -165,3 +212,12 @@ class KisClient:
             Position("ISA_MAIN", "MSFT", 2, 900000, "equity"),
             Position("ISA_MAIN", "QQQ", 3, 1800000, "equity"),
         ]
+
+
+def _to_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(str(value).replace(",", ""))
+    except ValueError:
+        return None
